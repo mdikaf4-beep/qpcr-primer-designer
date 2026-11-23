@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <title>qPCR Primer Designer by DF — Tests</title>
+  <style>
+    body { font-family: Consolas, monospace; background: #0f172a; color: #e2e8f0; padding: 24px; }
+    h1 { font-size: 18px; }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; }
+    .summary { margin-top: 16px; font-weight: bold; }
+    .detail { color: #94a3b8; font-size: 12px; margin-left: 20px; }
+  </style>
+</head>
+<body>
+  <h1>qPCR Primer Designer by DF — Test Suite</h1>
+  <div id="out">Menjalankan…</div>
+  <script src="engine.js"></script>
+  <script>
+    (function () {
+      const E = window.PrimerEngine;
+      const out = document.getElementById('out');
+      const results = [];
+      function check(name, fn) {
+        try {
+          const detail = fn();
+          results.push({ ok: true, name, detail: detail || '' });
+        } catch (e) {
+          results.push({ ok: false, name, detail: e.message });
+        }
+      }
+      function assert(cond, msg) { if (!cond) throw new Error(msg); }
+      function eq(a, b, msg) { assert(a === b, `${msg || 'expected'} ${b}, got ${a}`); }
+
+      check('engine version', () => { assert(!!E.VERSION, 'missing VERSION'); return E.VERSION; });
+      check('revcomp', () => eq(E.revcomp('ATGCGT'), 'ACGCAT'));
+      check('parseFasta', () => {
+        const r = E.parseFasta('>a desc\nATGC\n>b\nGGCC');
+        eq(r.length, 2, 'records'); eq(r[0].seq, 'ATGC'); eq(r[1].name, 'b');
+      });
+      check('cleanSeq U->T & strip', () => eq(E.cleanSeq('atgc u n 12'), 'ATGCTN'));
+      check('gcPercent', () => eq(E.gcPercent('AAGGCC'), 66.67));
+      check('homopolymerMax', () => eq(E.homopolymerMax('AAATGG'), 3));
+      check('maxRepeat', () => eq(E.maxRepeat('ATATAT'), 3));
+      check('parseIntervals', () => {
+        const r = E.parseIntervals('10-20,30:40');
+        eq(r.length, 2); eq(r[0][0], 9); eq(r[1][1], 39);
+      });
+      check('parsePositions', () => {
+        const r = E.parsePositions('10,20,20,abc');
+        eq(r.length, 2); eq(r[0], 9); eq(r[1], 19);
+      });
+      check('Tm finite & plausible', () => {
+        const tm = E.nearestNeighborTm('ATGCCCGTAGCTAGCTACGATCG');
+        assert(isFinite(tm) && tm > 45 && tm < 80, 'tm=' + tm);
+        return tm + ' °C';
+      });
+      check('Tm GC-rich > AT-rich', () => {
+        const gc = E.nearestNeighborTm('GCGCGCGCGCGCGCGCGCGC');
+        const at = E.nearestNeighborTm('ATATATATATATATATATAT');
+        assert(gc > at, `gc=${gc}, at=${at}`);
+        return `${gc} > ${at}`;
+      });
+      check('candidate generation', () => {
+        const seq = E.parseFasta('>t\n' + 'TAGATATACCCTGCGAACCCGAGTCCACTAAGCCGTGGGGCTAATACGCTATATTCCACGTTACACCTGTAGAAGGTAAGCCGCTAAGGCTGTAACCCATTTCCATGTTAGTTTGGGGATTCACCGCATGGCCGCTGGATTCCAGTGGTTGGACGCGGCCGCAGGAGACTTGGATGAAAT')[0].seq;
+        const c = E.generateCandidates(seq, E.DEFAULT_CONFIG);
+        const f = c.filter(x => x.orientation === 'FWD').length;
+        const r = c.filter(x => x.orientation === 'REV').length;
+        assert(f > 0 && r > 0, `fwd=${f}, rev=${r}`);
+        return `FWD=${f}, REV=${r}`;
+      });
+      check('design returns ranked pairs', () => {
+        const seq = E.parseFasta('>t\n' + 'TAGATATACCCTGCGAACCCGAGTCCACTAAGCCGTGGGGCTAATACGCTATATTCCACGTTACACCTGTAGAAGGTAAGCCGCTAAGGCTGTAACCCATTTCCATGTTAGTTTGGGGATTCACCGCATGGCCGCTGGATTCCAGTGGTTGGACGCGGCCGCAGGAGACTTGGATGAAAT')[0].seq;
+        const res = E.design(seq, Object.assign({}, E.DEFAULT_CONFIG, { topN: 5 }));
+        assert(res.pairs.length > 0, 'no pairs');
+        for (const p of res.pairs) {
+          assert(p.ampliconLength >= 70 && p.ampliconLength <= 200, 'amp=' + p.ampliconLength);
+          assert(p.fwd.tm >= 50 && p.fwd.tm <= 70, 'tm=' + p.fwd.tm);
+        }
+        for (let i = 1; i < res.pairs.length; i++) {
+          assert(res.pairs[i - 1].score <= res.pairs[i].score, 'not sorted');
+        }
+        return `${res.pairs.length} pairs, best score ${res.pairs[0].score}`;
+      });
+      check('evaluatePair matches design', () => {
+        const seq = 'TAGATATACCCTGCGAACCCGAGTCCACTAAGCCGTGGGGCTAATACGCTATATTCCACGTTACACCTGTAGAAGGTAAGCCGCTAAGGCTGTAACCCATTTCCATGTTAGTTTGGGGATTCACCGCATGGCCGCTGGATTCCAGTGGTTGGACGCGGCCGCAGGAGACTTGGATGAAAT';
+        const res = E.design(seq, Object.assign({}, E.DEFAULT_CONFIG, { topN: 1 }));
+        const p = res.pairs[0];
+        const ev = E.evaluatePair(seq, p.fwd.sequence, p.rev.sequence, E.DEFAULT_CONFIG);
+        eq(ev.score, p.score, 'score');
+        eq(ev.ampliconLength, p.ampliconLength, 'amplicon');
+      });
+      check('offtarget flag', () => {
+        const pair = { fwd: { sequence: 'AAAAAAAAAACGT' }, rev: { sequence: 'TTTTTTTTTACG' } };
+        const flags = E.checkOfftarget([{ name: 'pseudo', seq: 'GGGGAAAACGTCGAAAA' }], pair);
+        assert(flags.some(f => f.code === 'OFFTARGET_3PRIME' && f.severity === 'FAIL'), 'no FAIL');
+      });
+      check('exports', () => {
+        const res = E.design('TAGATATACCCTGCGAACCCGAGTCCACTAAGCCGTGGGGCTAATACGCTATATTCCACGTTACACCTGTAGAAGGTAAGCCGCTAAGGCTGTAACCCATTTCCATGTTAGTTTGGGGATTCACCGCATGGCCGCTGGATTCCAGTGGTTGGACGCGGCCGCAGGAGACTTGGATGAAAT', Object.assign({}, E.DEFAULT_CONFIG, { topN: 1 }));
+        const csv = E.exportCsv(res), bed = E.exportBed(res), rdml = E.exportRdml(res, {});
+        assert(csv.includes('"rank","score"'), 'csv header');
+        assert(bed.startsWith('target\t'), 'bed');
+        assert(rdml.includes('<rdml') && rdml.includes('</rdml>'), 'rdml');
+      });
+
+      const pass = results.filter(r => r.ok).length;
+      out.innerHTML =
+        results.map(r => `<div class="${r.ok ? 'pass' : 'fail'}">${r.ok ? 'PASS' : 'FAIL'} — ${r.name}${r.detail ? `<div class="detail">${r.detail}</div>` : ''}</div>`).join('') +
+        `<div class="summary">${pass}/${results.length} passed</div>`;
+    })();
+  </script>
+</body>
+</html>

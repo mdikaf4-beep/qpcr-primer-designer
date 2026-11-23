@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>qPCR Primer Designer by DF</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <div>
+      <h1>qPCR Primer Designer <span style="font-size:.7em; font-weight:500; opacity:.85;">by DF</span></h1>
+      <p>Desain & evaluasi primer SYBR / TaqMan — berjalan sepenuhnya di browser, tanpa instalasi.</p>
+    </div>
+    <div class="badge" id="versionBadge">engine v?</div>
+  </header>
+
+  <main>
+    <section>
+      <div class="card">
+        <h2>1. Sekuens target</h2>
+        <label for="sequenceInput">FASTA atau sekuens mentah (ACGT)</label>
+        <textarea id="sequenceInput" placeholder=">GAPDH_fragment&#10;ATGCCTGCACCACCAACTGCTTAGCACCCCTGGCCAAGGTCATCCATGACAACTTTGGTATCGTGGAAGGACTCATGACCACAGTCCATGCCATCACTGCCACCCAGAAGACTGTGGATGGCCCCTCCGGGAAACTGTGGCGTGATGGCCGCGGTTGGCTCAGCCATCCTTGCTTTACGATCAACTCCTTG..."></textarea>
+        <div class="row" style="margin-top:10px">
+          <input type="file" id="fileInput" accept=".fa,.fasta,.fna,.txt" />
+          <button class="ghost" id="exampleBtn">Muat contoh</button>
+        </div>
+        <div class="hint">Koordinat ditampilkan 1-based di UI, disimpan 0-based di engine.</div>
+      </div>
+
+      <div class="card">
+        <h2>2. Mode assay</h2>
+        <select id="assayType">
+          <option value="SYBR">SYBR Green ( primer saja )</option>
+          <option value="TaqMan">TaqMan ( primer + probe )</option>
+        </select>
+        <div class="hint" id="probeHint">Probe akan direkomendasikan dari dalam amplicon (Tm 65–70 °C).</div>
+      </div>
+
+      <div class="card">
+        <h2>3. Parameter desain</h2>
+        <div class="grid three">
+          <div><label>Panjang min</label><input type="number" id="minLen" value="18" /></div>
+          <div><label>Panjang max</label><input type="number" id="maxLen" value="25" /></div>
+          <div><label>Top N</label><input type="number" id="topN" value="10" /></div>
+          <div><label>Tm min</label><input type="number" id="tmMin" value="50" /></div>
+          <div><label>Tm max</label><input type="number" id="tmMax" value="70" /></div>
+          <div><label>ΔTm max</label><input type="number" id="deltaTm" value="2" /></div>
+          <div><label>GC min</label><input type="number" id="gcMin" value="40" /></div>
+          <div><label>GC max</label><input type="number" id="gcMax" value="60" /></div>
+          <div><label>Amplicon min</label><input type="number" id="ampMin" value="70" /></div>
+          <div><label>Amplicon max</label><input type="number" id="ampMax" value="200" /></div>
+        </div>
+
+        <h3>Lanjutan (opsional)</h3>
+        <div class="grid">
+          <div><label>SNP positions</label><input type="text" id="snpText" placeholder="121,205,318" /></div>
+          <div><label>Mask interval</label><input type="text" id="maskText" placeholder="100-110,400-415" /></div>
+        </div>
+        <div style="margin-top:10px">
+          <label>Exon junctions</label>
+          <input type="text" id="junctionText" placeholder="180,295" />
+          <label style="margin-top:8px"><input type="checkbox" id="requireJunction" /> Wajibkan primer/ amplicon melewati junction</label>
+        </div>
+        <div style="margin-top:10px">
+          <label>Sekuens off-target (FASTA, opsional)</label>
+          <textarea id="offtargetText" style="min-height:70px" placeholder=">pseudogen&#10;ATGC..."></textarea>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <button class="primary" id="runBtn">Jalankan desain</button>
+          <button class="ghost" id="clearBtn">Bersihkan</button>
+        </div>
+        <div class="error hidden" id="errorBox"></div>
+      </div>
+
+      <div class="card">
+        <h2>4. Evaluasi primer existing</h2>
+        <label>Forward primer</label>
+        <input type="text" id="evalFwd" class="mono" placeholder="CATGAGTCC..." />
+        <label style="margin-top:8px">Reverse primer (5'→3')</label>
+        <input type="text" id="evalRev" class="mono" placeholder="GCTAGCATT..." />
+        <button style="margin-top:10px" id="evalBtn">Evaluasi pasangan ini</button>
+      </div>
+    </section>
+
+    <section>
+      <div class="card">
+        <div class="tabbar">
+          <button class="active" id="tabDesign">Hasil desain</button>
+          <button id="tabEval">Hasil evaluasi</button>
+        </div>
+
+        <div id="designView">
+          <div class="summary" id="summaryBar"></div>
+          <div class="row" style="margin-bottom:10px">
+            <button id="exportJson">Unduh JSON</button>
+            <button id="exportCsv">Unduh CSV</button>
+            <button id="exportBed">Unduh BED</button>
+            <button id="exportRdml">Unduh RDML</button>
+            <button id="copyTop">Salin primer #1</button>
+          </div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead>
+                <tr>
+                  <th data-sort="rank">#</th>
+                  <th data-sort="score">Skor</th>
+                  <th>Forward</th>
+                  <th>Reverse</th>
+                  <th data-sort="fwdTm">Tm F/R</th>
+                  <th data-sort="gc">GC F/R</th>
+                  <th data-sort="amp">Amp</th>
+                  <th>QC</th>
+                </tr>
+              </thead>
+              <tbody id="resultsBody">
+                <tr><td colspan="8" style="color:var(--muted)">Belum ada hasil. Isi sekuens lalu klik “Jalankan desain”.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="detail hidden" id="detailCard"></div>
+        </div>
+
+        <div id="evalView" class="hidden">
+          <div id="evalResult" style="color:var(--muted)">Belum ada evaluasi.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Mouse hover pada kolom QC untuk melihat detail. Klik baris untuk melihat breakdown skor, peta amplicon, dan status QC.
+  </footer>
+
+  <script src="engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
